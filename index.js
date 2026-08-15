@@ -252,6 +252,12 @@ app.get('/history', async (req, res) => {
       } else {
         photoIds = m.photo ? [m.id] : [];
       }
+      // Link-preview (webpage) title/description often carries details that are
+      // not in the message text — e.g. salary shown on the linked job page.
+      const wp = m.media && m.media.webpage
+      const preview = wp && (wp.title || wp.description)
+        ? [wp.title, wp.description].filter(Boolean).join('. ').trim()
+        : null
       out.push({
         id: m.id,
         text,
@@ -259,6 +265,7 @@ app.get('/history', async (req, res) => {
         date: m.date ? new Date(m.date * 1000).toISOString() : null,
         hasPhoto: photoIds.length > 0,
         photoIds, // every image id in the post (album-aware)
+        preview, // webpage preview title+description, or null
       });
     }
     res.json({ ok: true, messages: out, minId });
