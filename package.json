@@ -1,0 +1,15 @@
+{
+  "name": "flat-finder-telegram-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MTProto (GramJS) sidecar that fetches public-channel history for the flat-finder backend, bypassing the t.me/s web-preview IP throttling.",
+  "scripts": {
+    "start": "node index.js",
+    "login": "node login.mjs"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "telegram": "^2.26.22"
+  }
+}

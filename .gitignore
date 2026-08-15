@@ -1,0 +1,8 @@
+node_modules/
+photo-cache/
+# Secrets — never commit. Keep only the template (sample.env).
+*.env
+!sample.env
+*.session
+cert.pem
+.DS_Store
