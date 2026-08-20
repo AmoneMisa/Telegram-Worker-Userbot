@@ -1,0 +1,31 @@
+[Unit]
+Description=Telegram MTProto worker (GramJS sidecar)
+Documentation=https://github.com/AmoneMisa/Telegram-Worker-Userbot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__APP_DIR__
+# Optional: index.js also reads worker.env itself, this just makes the values
+# visible to systemd (and to `systemctl show -p Environment`-style debugging).
+EnvironmentFile=-__APP_DIR__/worker.env
+ExecStart=/usr/bin/env node index.js
+Restart=always
+RestartSec=5
+# Telegram can be slow to answer on a cold start; don't let systemd give up.
+TimeoutStartSec=60
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tg-worker
+
+# The worker only needs its own directory (photo-cache) writable.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=__APP_DIR__
+
+[Install]
+WantedBy=multi-user.target
