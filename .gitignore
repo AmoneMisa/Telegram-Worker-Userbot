@@ -6,3 +6,4 @@ photo-cache/
 *.session
 cert.pem
 .DS_Store
+.idea
