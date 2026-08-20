@@ -2,13 +2,12 @@
 //
 // The backend used to scrape https://t.me/s/<channel>, but Telegram heavily
 // throttles that web preview from datacenter IPs (a production server saw ~1
-// post where a residential browser sees hundreds). This worker instead logs in
-// once as a real user account (session string in TG_SESSION) and calls the
-// MTProto API directly, which is not throttled the same way and returns
-// structured messages — no HTML parsing.
-//
-// It is transport-only: it hands raw message text/date back to the backend,
-// which keeps all the housing parsing/filtering logic in one place.
+// post where a browser sees hundreds). This worker instead logs in once as a real user account
+// and calls messages.getHistory. This replaced scraping https://t.me/s/<channel>
+// because Telegram heavily throttles that web preview from datacenter IPs (a
+// production server saw ~1 post where a browser sees hundreds). The worker is
+// transport-only: it returns raw message text/date, and all the housing
+// parsing/filtering below stays here so there's a single source of truth.
 
 import express from 'express';
 import { mkdir, readFile, writeFile, readdir, stat, unlink } from 'node:fs/promises';
@@ -201,12 +200,43 @@ app.get('/photo', async (req, res) => {
   }
 });
 
+function extractMessageUrls(message, text, webpage) {
+  const urls = [];
+
+  for (const entity of message.entities || []) {
+    // MessageEntityTextUrl carries the hidden destination directly.
+    if (typeof entity.url === 'string') {
+      urls.push(entity.url);
+      continue;
+    }
+
+    // MessageEntityUrl points at a visible URL inside the message text. Telegram
+    // offsets are UTF-16 code units, which matches JavaScript String.slice().
+    if (Number.isInteger(entity.offset) && Number.isInteger(entity.length)) {
+      const visible = text.slice(entity.offset, entity.offset + entity.length);
+      if (/^https?:\/\//i.test(visible)) urls.push(visible);
+    }
+  }
+
+  if (typeof webpage?.url === 'string') urls.push(webpage.url);
+
+  // Inline keyboard URL buttons are exactly what Telegram Mobile exposes via
+  // the "Open link" popup, and they are not part of m.message.
+  for (const row of message.replyMarkup?.rows || []) {
+    for (const button of row.buttons || []) {
+      if (typeof button.url === 'string') urls.push(button.url);
+    }
+  }
+
+  return [...new Set(urls.filter((url) => /^https?:\/\//i.test(url)))];
+}
+
 // GET /history?channel=<name>&limit=<n>&beforeId=<id>
 //   channel  : public channel username (without @)
 //   limit    : max messages to return (default 100)
 //   beforeId : paginate to messages older than this id (the `offsetId` cursor)
 //
-// Returns { ok, messages: [{ id, text, date, hasPhoto }], minId }.
+// Returns { ok, messages: [{ id, text, date, hasPhoto, urls }], minId }.
 app.get('/history', async (req, res) => {
   const channel = String(req.query.channel || '').trim();
   if (!channel) return res.status(400).json({ ok: false, error: 'channel required' });
@@ -254,10 +284,11 @@ app.get('/history', async (req, res) => {
       }
       // Link-preview (webpage) title/description often carries details that are
       // not in the message text — e.g. salary shown on the linked job page.
-      const wp = m.media && m.media.webpage
+      const wp = m.media && m.media.webpage;
       const preview = wp && (wp.title || wp.description)
         ? [wp.title, wp.description].filter(Boolean).join('. ').trim()
-        : null
+        : null;
+      const urls = extractMessageUrls(m, text, wp);
       out.push({
         id: m.id,
         text,
@@ -266,6 +297,7 @@ app.get('/history', async (req, res) => {
         hasPhoto: photoIds.length > 0,
         photoIds, // every image id in the post (album-aware)
         preview, // webpage preview title+description, or null
+        urls, // visible URLs + hidden text links + inline-button destinations
       });
     }
     res.json({ ok: true, messages: out, minId });
