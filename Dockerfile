@@ -10,7 +10,7 @@ ENV PORT=4100
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
-COPY index.js ./
+COPY index.js env.mjs session.mjs ./
 
 EXPOSE 4100
 CMD ["node", "index.js"]

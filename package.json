@@ -6,7 +6,9 @@
   "description": "MTProto (GramJS) sidecar that fetches public-channel history for the flat-finder backend, bypassing the t.me/s web-preview IP throttling.",
   "scripts": {
     "start": "node index.js",
-    "login": "node login.mjs"
+    "login": "node login.mjs",
+    "setup": "node login.mjs",
+    "check": "node --check env.mjs && node --check session.mjs && node --check login.mjs && node --check index.js"
   },
   "dependencies": {
     "express": "^4.21.2",

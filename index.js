@@ -15,18 +15,82 @@ import { mkdir, readFile, writeFile, readdir, stat, unlink } from 'node:fs/promi
 import path from 'node:path';
 import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
+import { loadEnv, envFilePath, readEnvFile, writeEnvVar } from './env.mjs';
+import { interactiveLogin, isDeadSession, canPrompt } from './session.mjs';
 
-const apiId = Number(process.env.TG_API_ID);
-const apiHash = process.env.TG_API_HASH;
-const session = process.env.TG_SESSION || '';
+// Pick up worker.env (or TG_ENV_FILE) automatically, so `npm start` works on a
+// bare shell. Anything already exported — systemd, Docker, CI — wins over it.
+const envFile = loadEnv();
+if (envFile) console.log('[tg-worker] loaded env from ' + envFile);
+
+let apiId = Number(process.env.TG_API_ID);
+let apiHash = process.env.TG_API_HASH;
+let session = process.env.TG_SESSION || '';
 const port = Number(process.env.PORT) || 4100;
 
-if (!apiId || !apiHash || !session) {
-  console.error(
-    '[tg-worker] TG_API_ID, TG_API_HASH and TG_SESSION are required. ' +
-      'Generate a session with `npm run login`.',
+// Only values that came from the env file are ours to rewrite. If TG_SESSION
+// was injected by systemd/Docker/CI, that source owns it and we leave it alone.
+const fileValues = readEnvFile();
+const sessionIsOurs = !session || fileValues.TG_SESSION === session;
+
+function persist(key, value) {
+  if (!sessionIsOurs) return false;
+  try {
+    writeEnvVar(key, value, envFile ?? envFilePath());
+    return true;
+  } catch (err) {
+    console.warn('[tg-worker] could not save ' + key + ': ' + (err?.message ?? err));
+    return false;
+  }
+}
+
+// Log in right here rather than making the operator run a second command. Only
+// possible with a terminal to ask on: Telegram mints a session against a
+// one-time code it sends to the account, and nothing can read that code for
+// us. Headless (systemd, Docker) therefore still exits with instructions.
+async function login(reason) {
+  console.warn('[tg-worker] ' + reason);
+  if (!canPrompt()) {
+    console.error(
+      '[tg-worker] no terminal to log in on. Run `npm run login` in an interactive\n' +
+        '[tg-worker] shell (here over ssh, or on your laptop — the session string is\n' +
+        '[tg-worker] portable), then start the service again.',
+    );
+    process.exit(1);
+  }
+  let creds;
+  try {
+    creds = await interactiveLogin({ apiId, apiHash, label: 'tg-worker' });
+  } catch (err) {
+    // A mistyped credential or an abandoned prompt shouldn't dump a stack.
+    console.error('[tg-worker] login failed: ' + (err?.errorMessage || err?.message || err));
+    process.exit(1);
+  }
+  apiId = creds.apiId;
+  apiHash = creds.apiHash;
+  session = creds.session;
+  persist('TG_API_ID', String(apiId));
+  persist('TG_API_HASH', apiHash);
+  const saved = persist('TG_SESSION', session);
+  console.log(
+    saved
+      ? '[tg-worker] session saved to ' + (envFile ?? envFilePath()) + ' — this was a one-off.'
+      : '[tg-worker] session NOT saved (it is supplied from the environment) — ' +
+          'update that source or the next start asks again.',
   );
-  process.exit(1);
+  return session;
+}
+
+if (!apiId || !apiHash || !session) {
+  const missing = [!apiId && 'TG_API_ID', !apiHash && 'TG_API_HASH', !session && 'TG_SESSION']
+    .filter(Boolean)
+    .join(', ');
+  await login(
+    'missing ' +
+      missing +
+      (envFile ? ' in ' + envFile : ' (no env file at ' + envFilePath() + ')') +
+      ' — starting login.',
+  );
 }
 
 // Optional outbound proxy. Some hosts block direct egress to Telegram's
@@ -56,13 +120,46 @@ function buildProxy() {
   };
 }
 
-const client = new TelegramClient(new StringSession(session), apiId, apiHash, {
-  connectionRetries: 5,
-  // Auto-wait through short FLOOD_WAITs (Telegram asking us to slow down)
-  // instead of erroring; anything longer than this surfaces as an error.
-  floodSleepThreshold: 60,
-  proxy: buildProxy(),
-});
+function buildClient(sessionString) {
+  return new TelegramClient(new StringSession(sessionString), apiId, apiHash, {
+    connectionRetries: 5,
+    // Auto-wait through short FLOOD_WAITs (Telegram asking us to slow down)
+    // instead of erroring; anything longer than this surfaces as an error.
+    floodSleepThreshold: 60,
+    proxy: buildProxy(),
+  });
+}
+
+// A truncated/garbled session string (a bad paste into worker.env) otherwise
+// dies inside GramJS's binary reader with a stack trace that says nothing about
+// what to do next. Re-mint it instead of dying.
+let client;
+while (!client) {
+  try {
+    client = buildClient(session);
+  } catch (err) {
+    await login('TG_SESSION is not a valid session string (' + (err?.message ?? err) + ').');
+  }
+}
+
+// Set once Telegram tells us the session is gone (revoked from the Devices
+// list, account deactivated, auth key dropped). Reported on /health, because
+// otherwise a dead session looks exactly like a healthy worker whose every
+// request happens to 502.
+let sessionDead = null;
+function noteTelegramError(err) {
+  if (!isDeadSession(err)) return;
+  const msg = err?.errorMessage || err?.message || String(err);
+  if (!sessionDead) {
+    console.error(
+      '[tg-worker] the Telegram session is no longer valid (' +
+        msg +
+        ').\n[tg-worker] Re-mint it with:  npm run login -- --force   ' +
+        '(needs a terminal — Telegram sends a one-time code)',
+    );
+  }
+  sessionDead = msg;
+}
 
 // Resolving a @username to an entity is itself an API call, so cache the
 // resolved entity per channel for the process lifetime.
@@ -156,7 +253,10 @@ async function cleanupPhotoDir() {
 const app = express();
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: client.connected === true });
+  res.json({
+    ok: client.connected === true && sessionDead === null,
+    ...(sessionDead ? { error: 'session invalid: ' + sessionDead, fix: 'npm run login -- --force' } : {}),
+  });
 });
 
 // GET /photo?channel=<name>&id=<messageId>
@@ -196,6 +296,7 @@ app.get('/photo', async (req, res) => {
     res.send(buf);
   } catch (err) {
     const msg = err?.message ?? String(err);
+    noteTelegramError(err);
     console.warn(`[tg-worker] photo ${key} failed: ${msg}`);
     res.status(502).json({ ok: false, error: msg });
   }
@@ -271,13 +372,58 @@ app.get('/history', async (req, res) => {
     res.json({ ok: true, messages: out, minId });
   } catch (err) {
     const msg = err?.message ?? String(err);
+    noteTelegramError(err);
     console.warn(`[tg-worker] @${channel} failed: ${msg}`);
     res.status(502).json({ ok: false, error: msg });
   }
 });
 
-await client.connect();
-console.log('[tg-worker] connected to Telegram');
+// Connect, then prove the session actually works. A revoked session connects
+// happily and only fails on the first real call, which would otherwise turn
+// into "the worker is up but everything 502s" hours later.
+async function connectAndVerify() {
+  await client.connect();
+  try {
+    return await client.getMe();
+  } catch (err) {
+    if (!isDeadSession(err)) throw err;
+    await login(
+      'the stored session is no longer valid (' +
+        (err?.errorMessage || err?.message || err) +
+        ') — it was probably revoked from Telegram > Settings > Devices.',
+    );
+    await client.disconnect().catch(() => {});
+    client = buildClient(session);
+    await client.connect();
+    return client.getMe();
+  }
+}
+
+const me = await connectAndVerify();
+console.log(
+  '[tg-worker] connected to Telegram as ' +
+    (me?.username ? '@' + me.username : [me?.firstName, me?.lastName].filter(Boolean).join(' ')),
+);
+
+// Telegram can hand back an updated session (a datacenter migration rewrites
+// it on the first call). Persisting it means the stored string never drifts
+// out of date behind our back and forces a manual re-login later.
+function persistSessionIfChanged() {
+  if (!sessionIsOurs || sessionDead) return;
+  let current;
+  try {
+    current = client.session.save();
+  } catch {
+    return; // Session not in a saveable state right now; try again next tick.
+  }
+  if (current && current !== session) {
+    session = current;
+    if (persist('TG_SESSION', current)) console.log('[tg-worker] stored session refreshed');
+  }
+}
+persistSessionIfChanged();
+const sessionTimer = setInterval(persistSessionIfChanged, 60 * 60 * 1000);
+if (sessionTimer.unref) sessionTimer.unref();
 
 // Prune the on-disk photo cache on boot and every 6 hours thereafter.
 cleanupPhotoDir();
