@@ -1,0 +1,11 @@
+node_modules
+.git
+.github
+.env
+worker.env
+flatfinder.env
+photo-cache
+*.session
+*.log
+.DS_Store
+.idea
