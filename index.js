@@ -1,15 +1,14 @@
-// Telegram MTProto transport sidecar. Domain parsing stays in callers such as
-// Personal Site and Flat Finder; this process only owns Telegram connectivity,
-// rate-limit protection, media caching and the stable HTTP transport contract.
+// Telegram MTProto sidecar. The HTTP layer is deliberately transport-only:
+// callers own all domain parsing and filtering.
 
 import express from 'express';
 import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 import { loadEnv, envFilePath, readEnvFile, writeEnvVar } from './env.mjs';
 import { interactiveLogin, isDeadSession, canPrompt } from './session.mjs';
+import { createTelegramGateway } from './src/telegram-gateway.js';
 import { createPhotoCache } from './src/photo-cache.js';
 import { registerRoutes } from './src/routes.js';
-import { createTelegramGateway } from './src/telegram-gateway.js';
 
 const envFile = loadEnv();
 if (envFile) console.log('[tg-worker] loaded env from ' + envFile);
@@ -83,13 +82,11 @@ function buildProxy() {
   const ip = process.env.TG_PROXY_HOST;
   const proxyPort = Number(process.env.TG_PROXY_PORT);
   if (!ip || !proxyPort) return undefined;
-
   const secret = process.env.TG_PROXY_SECRET;
   if (secret) {
     console.log(`[tg-worker] using MTProxy ${ip}:${proxyPort}`);
     return { ip, port: proxyPort, MTProxy: true, secret };
   }
-
   console.log(`[tg-worker] using SOCKS5 proxy ${ip}:${proxyPort}`);
   return {
     ip,
@@ -126,7 +123,7 @@ function noteTelegramError(err) {
     console.error(
       '[tg-worker] the Telegram session is no longer valid (' +
         msg +
-        ').\n[tg-worker] Re-mint it with:  npm run login -- --force   ' +
+        ').\n[tg-worker] Re-mint it with: npm run login -- --force ' +
         '(needs a terminal — Telegram sends a one-time code)',
     );
   }
@@ -197,4 +194,7 @@ registerRoutes(app, {
   }),
 });
 
-app.listen(port, () => console.log(`[tg-worker] listening on :${port}`));
+// Containers must listen on all interfaces. Binding implicitly can resolve to
+// IPv6-only on some Node/host combinations, leaving Docker's IPv4 published
+// port unreachable even though the process reports that it is listening.
+app.listen(port, '0.0.0.0', () => console.log(`[tg-worker] listening on 0.0.0.0:${port}`));
