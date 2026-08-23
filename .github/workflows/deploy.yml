@@ -19,11 +19,13 @@ name: deploy
 on:
   push:
     branches: [master]
+  pull_request:
+    branches: [master]
   workflow_dispatch:
 
 # Never let two deploys touch the server at the same time.
 concurrency:
-  group: deploy-tg-worker
+  group: deploy-tg-worker-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -37,10 +39,11 @@ jobs:
           cache: npm
       # Fails on a lockfile that doesn't match package.json — the exact thing
       # that would otherwise break `npm ci` on the server mid-deploy.
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run check
 
   deploy:
+    if: github.event_name != 'pull_request'
     needs: check
     runs-on: ubuntu-latest
     steps:
