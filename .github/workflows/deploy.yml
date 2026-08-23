@@ -35,7 +35,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
       - name: Set up ssh
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
@@ -44,8 +43,8 @@ jobs:
           SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
-          test -n "$SSH_KEY"  || { echo "::error::secret DEPLOY_SSH_KEY is not set"; exit 1; }
-          test -n "$SSH_HOST" || { echo "::error::secret DEPLOY_HOST is not set"; exit 1; }
+          test -n "$SSH_KEY" || exit 1
+          test -n "$SSH_HOST" || exit 1
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
@@ -55,7 +54,6 @@ jobs:
             ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
           fi
           chmod 600 ~/.ssh/known_hosts
-
       - name: Deploy
         env:
           SSH_HOST: ${{ secrets.DEPLOY_HOST }}

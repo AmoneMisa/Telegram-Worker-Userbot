@@ -72,7 +72,7 @@ export function writeEnvVar(key, value, file = envFilePath()) {
   try {
     chmodSync(file, 0o600);
   } catch {
-    // Windows / exotic filesystems — best effort.
+    // Best effort on filesystems that do not support POSIX permissions.
   }
   return file;
 }
