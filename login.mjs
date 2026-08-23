@@ -1,4 +1,4 @@
-// Mint a Telegram MTProto session and store it in worker.env.
+// Mint a Telegram MTProto session and store it in .env.
 //
 // You do not normally need this command: `npm start` runs the same flow by
 // itself when it finds no usable session and it has a terminal to ask on. Use
@@ -8,11 +8,11 @@
 //   npm run login             # log in if there is no session yet
 //   npm run login -- --force  # log in again and replace the stored session
 //
-// It creates worker.env from sample.env if it is missing, asks for anything
-// still blank (API id/hash from https://my.telegram.org -> API development
-// tools), then prompts for phone number, login code and 2FA password. The
-// result is written back into worker.env — no copy-paste. That file grants
-// full access to the account: keep it chmod 600 and never commit it.
+// It creates .env from sample.env if it is missing, asks for anything still
+// blank (API id/hash from https://my.telegram.org -> API development tools),
+// then prompts for phone number, login code and 2FA password. The result is
+// written back into .env. That file grants full access to the account: keep it
+// chmod 600 and never commit it.
 
 import { copyFileSync, existsSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -23,8 +23,6 @@ import { interactiveLogin, canPrompt } from './session.mjs';
 
 const force = process.argv.includes('--force');
 
-// Bootstrap the env file from the template so the first run has somewhere to
-// write to (and the operator gets the documented sample as a starting point).
 const envFile = envFilePath();
 if (!existsSync(envFile)) {
   const sample = fileURLToPath(new URL('sample.env', import.meta.url));
@@ -66,6 +64,6 @@ writeEnvVar('TG_API_HASH', apiHash, envFile);
 writeEnvVar('TG_SESSION', session, envFile);
 
 console.log('\nLogin OK. TG_SESSION written to ' + envFile + ' (chmod 600).');
-console.log('Start the worker with: npm start');
+console.log('Start the worker with: docker compose up -d');
 console.log('Keep that file secret — anyone with the session has full account access.\n');
 process.exit(0);
