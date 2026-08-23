@@ -1,21 +1,5 @@
 name: deploy
 
-# Autodeploy: every push to master is syntax/lockfile checked, then applied to
-# the server over ssh by piping deploy/deploy.sh into a remote shell (so the
-# server always runs the version of the script from the commit being deployed).
-#
-# Required repository secrets (Settings -> Secrets and variables -> Actions):
-#   DEPLOY_HOST         server hostname or IP
-#   DEPLOY_USER         ssh user (e.g. root)
-#   DEPLOY_SSH_KEY      private key whose public half is in the server's
-#                       ~/.ssh/authorized_keys (ed25519, no passphrase)
-# Optional:
-#   DEPLOY_PORT         ssh port (default 22)
-#   DEPLOY_KNOWN_HOSTS  server host key line; without it the host key is
-#                       trusted on first use via ssh-keyscan
-#   DEPLOY_PATH         checkout on the server (default /opt/tg-worker)
-#   DEPLOY_SERVICE      systemd unit name (default tg-worker)
-
 on:
   push:
     branches: [master]
@@ -23,7 +7,6 @@ on:
     branches: [master]
   workflow_dispatch:
 
-# Never let two deploys touch the server at the same time.
 concurrency:
   group: deploy-tg-worker-${{ github.ref }}
   cancel-in-progress: false
@@ -37,10 +20,14 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-      # Fails on a lockfile that doesn't match package.json — the exact thing
-      # that would otherwise break `npm ci` on the server mid-deploy.
       - run: npm ci --ignore-scripts
       - run: npm run check
+      - name: Validate Compose
+        run: |
+          cp sample.env .env
+          docker compose config --quiet
+      - name: Build runtime image
+        run: docker build -t tg-worker:ci .
 
   deploy:
     if: github.event_name != 'pull_request'
@@ -65,7 +52,6 @@ jobs:
           if [ -n "${SSH_KNOWN_HOSTS:-}" ]; then
             printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           else
-            echo "DEPLOY_KNOWN_HOSTS not set — trusting the host key on first use"
             ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
           fi
           chmod 600 ~/.ssh/known_hosts
@@ -76,12 +62,11 @@ jobs:
           SSH_USER: ${{ secrets.DEPLOY_USER }}
           SSH_PORT: ${{ secrets.DEPLOY_PORT }}
           APP_DIR: ${{ secrets.DEPLOY_PATH }}
-          SERVICE: ${{ secrets.DEPLOY_SERVICE }}
           BRANCH: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/id_deploy -p "${SSH_PORT:-22}" \
               -o BatchMode=yes -o ConnectTimeout=15 \
               "${SSH_USER:-root}@$SSH_HOST" \
-              "APP_DIR='${APP_DIR:-/opt/tg-worker}' SERVICE='${SERVICE:-tg-worker}' BRANCH='$BRANCH' bash -s" \
+              "APP_DIR='${APP_DIR:-/opt/tg-worker}' BRANCH='$BRANCH' bash -s" \
               < deploy/deploy.sh
