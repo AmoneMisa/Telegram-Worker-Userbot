@@ -8,13 +8,13 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=4100
 
-# The worker persists worker.env/session refreshes and its photo cache below
-# /app, so keep the directory writable while dropping root privileges.
+# .env and photo-cache are bind-mounted at runtime; keep /app writable for the
+# unprivileged Node user that refreshes the Telegram session and caches media.
 RUN chown node:node /app
 
 COPY --from=deps --chown=node:node /app/node_modules ./node_modules
-COPY --chown=node:node package.json ./
-COPY --chown=node:node index.js env.mjs session.mjs ./
+COPY --chown=node:node package.json sample.env ./
+COPY --chown=node:node index.js login.mjs env.mjs session.mjs ./
 COPY --chown=node:node src ./src
 
 USER node
