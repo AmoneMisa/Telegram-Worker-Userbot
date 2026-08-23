@@ -1,21 +1,21 @@
 FROM node:24-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --ignore-scripts
 
 FROM node:24-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=4100
 
-COPY --from=deps /app/node_modules ./node_modules
-COPY package.json ./
-COPY index.js env.mjs session.mjs ./
+# The worker persists worker.env/session refreshes and its photo cache below
+# /app, so keep the directory writable while dropping root privileges.
+RUN chown node:node /app
 
-# Run the network-facing worker without root privileges. /app must stay writable
-# because the worker may persist worker.env and its bounded photo cache there.
-RUN chown -R node:node /app
+COPY --from=deps --chown=node:node /app/node_modules ./node_modules
+COPY --chown=node:node package.json ./
+COPY --chown=node:node index.js env.mjs session.mjs ./
+
 USER node
-
 EXPOSE 4100
 CMD ["node", "index.js"]
