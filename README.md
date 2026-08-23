@@ -1,13 +1,18 @@
 # telegram-worker
 
-A tiny, **transport-only** Telegram MTProto sidecar (GramJS). It logs in once as a
-real user account and exposes public-channel history over plain HTTP, so backend
-services can read Telegram without the datacenter-IP throttling that cripples the
-`t.me/s` web preview. It does **no** domain parsing — it hands raw message
-text/date back to the caller.
+A tiny, **transport-only** Telegram MTProto sidecar (`teleproto`, the maintained
+successor to GramJS). It logs in once as a real user account and exposes
+public-channel history over plain HTTP, so backend services can read Telegram
+without the datacenter-IP throttling that cripples the `t.me/s` web preview. It
+does **no** domain parsing — it hands raw message text/date back to the caller.
 
 Shared by multiple apps (e.g. the job finder and the flat finder): each caller
 passes its own channels and does its own parsing.
+
+The npm dependency is installed as `telegram: npm:teleproto@...` deliberately:
+`teleproto` is largely GramJS-compatible, so the existing import paths and saved
+`StringSession` values remain compatible while the runtime moves off the archived
+GramJS package.
 
 ## Endpoints
 
@@ -16,7 +21,21 @@ passes its own channels and does its own parsing.
   `{ ok, messages: [{ id, text, date, hasPhoto, photoIds, preview }], minId }`
 - `GET /photo?channel=<username>&id=<messageId>` → raw JPEG bytes (cached)
 
+These endpoints and payload fields are an inter-service API used by Personal
+Site and Flat Finder. Keep them backward-compatible unless callers are migrated
+in the same change.
+
+## Architecture
+
+Redis is intentionally not part of this service. The worker is single-account
+and single-process: MTProto calls are serialized in-process, entity/hot-photo
+caches are process-local, and downloaded photos are persisted on disk. Redis
+would add a network dependency without a useful consistency boundary unless the
+worker is deliberately redesigned for horizontal scaling.
+
 ## Setup
+
+Node.js 24 LTS is the supported runtime.
 
 ```bash
 npm ci

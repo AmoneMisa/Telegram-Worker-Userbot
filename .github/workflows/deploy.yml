@@ -19,32 +19,35 @@ name: deploy
 on:
   push:
     branches: [master]
+  pull_request:
+    branches: [master]
   workflow_dispatch:
 
 # Never let two deploys touch the server at the same time.
 concurrency:
-  group: deploy-tg-worker
+  group: deploy-tg-worker-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
       # Fails on a lockfile that doesn't match package.json — the exact thing
       # that would otherwise break `npm ci` on the server mid-deploy.
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run check
 
   deploy:
+    if: github.event_name != 'pull_request'
     needs: check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up ssh
         env:

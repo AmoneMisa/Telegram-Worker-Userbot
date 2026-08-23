@@ -3,15 +3,18 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "MTProto (GramJS) sidecar that fetches public-channel history for the flat-finder backend, bypassing the t.me/s web-preview IP throttling.",
+  "description": "MTProto sidecar that fetches public-channel history for the flat-finder and Personal Site backends without t.me/s web-preview throttling.",
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
     "start": "node index.js",
     "login": "node login.mjs",
     "setup": "node login.mjs",
-    "check": "node --check env.mjs && node --check session.mjs && node --check login.mjs && node --check index.js"
+    "check": "node --check env.mjs && node --check session.mjs && node --check login.mjs && node --check index.js && node --check src/queue.js && node --check src/photo-cache.js && node --check src/telegram-gateway.js && node --check src/routes.js"
   },
   "dependencies": {
-    "express": "^4.21.2",
-    "telegram": "^2.26.22"
+    "express": "^5.2.1",
+    "telegram": "npm:teleproto@^1.228.5"
   }
 }
