@@ -7,6 +7,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      PORT: 4100
     volumes:
       - ./.env:/app/.env
       - ./photo-cache:/app/photo-cache
