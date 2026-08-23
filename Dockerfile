@@ -13,8 +13,8 @@ ENV PORT=4100
 RUN chown node:node /app
 
 COPY --from=deps --chown=node:node /app/node_modules ./node_modules
-COPY --chown=node:node package.json ./
-COPY --chown=node:node index.js env.mjs session.mjs ./
+COPY --chown=node:node package.json sample.env ./
+COPY --chown=node:node index.js login.mjs env.mjs session.mjs ./
 COPY --chown=node:node src ./src
 
 USER node
