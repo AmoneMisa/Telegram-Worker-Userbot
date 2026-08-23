@@ -26,14 +26,26 @@ docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required"
 command -v curl >/dev/null 2>&1 || die "curl is required for the health check"
 cd "$APP_DIR"
 
-# One-time migration from the old systemd deployment naming.
+# One-time migration from the previous systemd deployment.
 if [ ! -f .env ] && [ -f worker.env ]; then
   mv worker.env .env
-  chmod 600 .env
   log "migrated worker.env to .env"
 fi
 [ -f .env ] || die ".env is missing — copy sample.env to .env and configure Telegram credentials"
+chmod 600 .env
 mkdir -p photo-cache
+if [ "$(id -u)" -eq 0 ]; then
+  chown 1000:1000 .env photo-cache
+fi
+
+# Do not let the old Node/systemd process compete with Docker for port 4100.
+if command -v systemctl >/dev/null 2>&1 && systemctl cat tg-worker >/dev/null 2>&1; then
+  if systemctl is-active --quiet tg-worker; then
+    log "stopping old tg-worker systemd service"
+    systemctl stop tg-worker
+  fi
+  systemctl disable tg-worker >/dev/null 2>&1 || true
+fi
 
 port_from_env() {
   local p
