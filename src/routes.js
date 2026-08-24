@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 function extractMessageUrls(message, text, webpage) {
   const urls = [];
 
@@ -78,6 +80,16 @@ export function registerRoutes(app, { gateway, photoCache, health }) {
     res.json(health());
   });
 
+  async function loadPhoto(channel, id) {
+    let buf = await photoCache.get(channel, id);
+    if (buf) return buf;
+
+    buf = await gateway.getPhoto(channel, id);
+    if (!buf) return null;
+    await photoCache.set(channel, id, buf);
+    return buf;
+  }
+
   app.get('/photo', async (req, res) => {
     const channel = String(req.query.channel || '').trim();
     const id = Number(req.query.id);
@@ -87,17 +99,38 @@ export function registerRoutes(app, { gateway, photoCache, health }) {
 
     const key = `${channel}/${id}`;
     try {
-      let buf = await photoCache.get(channel, id);
-      if (!buf) {
-        buf = await gateway.getPhoto(channel, id);
-        if (!buf) return res.status(404).json({ ok: false, error: 'no photo' });
-        await photoCache.set(channel, id, buf);
-      }
+      const buf = await loadPhoto(channel, id);
+      if (!buf) return res.status(404).json({ ok: false, error: 'no photo' });
       res.setHeader('Content-Type', 'image/jpeg');
       res.send(buf);
     } catch (err) {
       const msg = err?.message ?? String(err);
       console.warn(`[tg-worker] photo ${key} failed: ${msg}`);
+      res.status(502).json({ ok: false, error: msg });
+    }
+  });
+
+  // Content-based fingerprint for cross-message dedupe. It deliberately reuses
+  // the same photo cache as /photo, so a fingerprint never creates a second
+  // media copy or a separate cache hierarchy. SHA-256 is dependency-free and
+  // compares the actual JPEG bytes; callers must retain a text/content fallback
+  // because a separately recompressed copy of the same image gets a new hash.
+  app.get('/photo-fingerprint', async (req, res) => {
+    const channel = String(req.query.channel || '').trim();
+    const id = Number(req.query.id);
+    if (!channel || !Number.isFinite(id)) {
+      return res.status(400).json({ ok: false, error: 'channel and numeric id required' });
+    }
+
+    const key = `${channel}/${id}`;
+    try {
+      const buf = await loadPhoto(channel, id);
+      if (!buf) return res.status(404).json({ ok: false, error: 'no photo' });
+      const fingerprint = createHash('sha256').update(buf).digest('hex');
+      res.json({ ok: true, algorithm: 'sha256', fingerprint });
+    } catch (err) {
+      const msg = err?.message ?? String(err);
+      console.warn(`[tg-worker] fingerprint ${key} failed: ${msg}`);
       res.status(502).json({ ok: false, error: msg });
     }
   });
