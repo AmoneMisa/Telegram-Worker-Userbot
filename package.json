@@ -11,7 +11,7 @@
     "start": "node index.js",
     "login": "node login.mjs",
     "setup": "node login.mjs",
-    "check": "node --check env.mjs && node --check session.mjs && node --check login.mjs && node --check index.js && node --check src/queue.js && node --check src/photo-cache.js && node --check src/telegram-gateway.js && node --check src/routes.js",
+    "check": "node --check env.mjs && node --check session.mjs && node --check login.mjs && node --check index.js && node --check src/queue.js && node --check src/photo-cache.js && node --check src/telegram-gateway.js && node --check src/routes.js && npm test",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
