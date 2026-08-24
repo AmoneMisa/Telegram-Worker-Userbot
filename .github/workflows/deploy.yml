@@ -22,6 +22,7 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run check
+      - run: npm test
       - name: Validate Compose
         run: |
           cp sample.env .env

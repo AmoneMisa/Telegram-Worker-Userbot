@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 function extractMessageUrls(message, text, webpage) {
   const urls = [];
 
@@ -22,21 +24,51 @@ function extractMessageUrls(message, text, webpage) {
   return [...new Set(urls.filter((url) => /^https?:\/\//i.test(url)))];
 }
 
+function photoMetadataFingerprint(photo) {
+  for (const size of photo?.sizes || []) {
+    const bytes = size?.bytes;
+    if (!bytes) continue;
+    try {
+      const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+      if (!buf.length) continue;
+      return createHash('sha256').update(buf).digest('hex');
+    } catch {
+      // Unknown Telegram size representation: try the next available size.
+    }
+  }
+  return null;
+}
+
 function normalizeHistory(messages) {
   const albumPhotoIds = new Map();
+  const albumFingerprints = new Map();
+  const photoFingerprintById = new Map();
   let minId = null;
 
   for (const message of messages) {
     if (typeof message.id === 'number') {
       minId = minId === null ? message.id : Math.min(minId, message.id);
     }
+
+    if (message.photo) {
+      const fingerprint = photoMetadataFingerprint(message.photo);
+      if (fingerprint) photoFingerprintById.set(message.id, fingerprint);
+    }
+
     const groupId = message.groupedId != null ? String(message.groupedId) : null;
     if (groupId && message.photo) {
       if (!albumPhotoIds.has(groupId)) albumPhotoIds.set(groupId, []);
       albumPhotoIds.get(groupId).push(message.id);
     }
   }
-  for (const ids of albumPhotoIds.values()) ids.sort((a, b) => a - b);
+
+  for (const [groupId, ids] of albumPhotoIds) {
+    ids.sort((a, b) => a - b);
+    albumFingerprints.set(
+      groupId,
+      ids.map((id) => photoFingerprintById.get(id)).filter(Boolean),
+    );
+  }
 
   const out = [];
   const seenAlbums = new Set();
@@ -46,12 +78,16 @@ function normalizeHistory(messages) {
 
     const groupId = message.groupedId != null ? String(message.groupedId) : null;
     let photoIds;
+    let photoFingerprints;
     if (groupId) {
       if (seenAlbums.has(groupId)) continue;
       seenAlbums.add(groupId);
       photoIds = albumPhotoIds.get(groupId) ?? (message.photo ? [message.id] : []);
+      photoFingerprints = albumFingerprints.get(groupId) ?? [];
     } else {
       photoIds = message.photo ? [message.id] : [];
+      const fingerprint = photoFingerprintById.get(message.id);
+      photoFingerprints = fingerprint ? [fingerprint] : [];
     }
 
     const webpage = message.media?.webpage;
@@ -65,6 +101,7 @@ function normalizeHistory(messages) {
       date: message.date ? new Date(message.date * 1000).toISOString() : null,
       hasPhoto: photoIds.length > 0,
       photoIds,
+      photoFingerprints,
       preview,
       urls: extractMessageUrls(message, text, webpage),
     });
@@ -78,6 +115,16 @@ export function registerRoutes(app, { gateway, photoCache, health }) {
     res.json(health());
   });
 
+  async function loadPhoto(channel, id) {
+    let buf = await photoCache.get(channel, id);
+    if (buf) return buf;
+
+    buf = await gateway.getPhoto(channel, id);
+    if (!buf) return null;
+    await photoCache.set(channel, id, buf);
+    return buf;
+  }
+
   app.get('/photo', async (req, res) => {
     const channel = String(req.query.channel || '').trim();
     const id = Number(req.query.id);
@@ -87,17 +134,37 @@ export function registerRoutes(app, { gateway, photoCache, health }) {
 
     const key = `${channel}/${id}`;
     try {
-      let buf = await photoCache.get(channel, id);
-      if (!buf) {
-        buf = await gateway.getPhoto(channel, id);
-        if (!buf) return res.status(404).json({ ok: false, error: 'no photo' });
-        await photoCache.set(channel, id, buf);
-      }
+      const buf = await loadPhoto(channel, id);
+      if (!buf) return res.status(404).json({ ok: false, error: 'no photo' });
       res.setHeader('Content-Type', 'image/jpeg');
       res.send(buf);
     } catch (err) {
       const msg = err?.message ?? String(err);
       console.warn(`[tg-worker] photo ${key} failed: ${msg}`);
+      res.status(502).json({ ok: false, error: msg });
+    }
+  });
+
+  // Exact byte-level fingerprint for callers that need to compare the cached
+  // full JPEG. It shares /photo's cache and has no additional dependencies.
+  // /history uses Telegram's stripped-thumbnail bytes instead so normal crawls
+  // never download media merely to deduplicate listings.
+  app.get('/photo-fingerprint', async (req, res) => {
+    const channel = String(req.query.channel || '').trim();
+    const id = Number(req.query.id);
+    if (!channel || !Number.isFinite(id)) {
+      return res.status(400).json({ ok: false, error: 'channel and numeric id required' });
+    }
+
+    const key = `${channel}/${id}`;
+    try {
+      const buf = await loadPhoto(channel, id);
+      if (!buf) return res.status(404).json({ ok: false, error: 'no photo' });
+      const fingerprint = createHash('sha256').update(buf).digest('hex');
+      res.json({ ok: true, algorithm: 'sha256', fingerprint });
+    } catch (err) {
+      const msg = err?.message ?? String(err);
+      console.warn(`[tg-worker] fingerprint ${key} failed: ${msg}`);
       res.status(502).json({ ok: false, error: msg });
     }
   });
