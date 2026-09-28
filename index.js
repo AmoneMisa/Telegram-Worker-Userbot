@@ -9,6 +9,8 @@ import { interactiveLogin, isDeadSession, canPrompt } from './session.mjs';
 import { createTelegramGateway } from './src/telegram-gateway.js';
 import { createPhotoCache } from './src/photo-cache.js';
 import { registerRoutes } from './src/routes.js';
+import { requireWorkerKey } from './src/worker-auth.js';
+import { registerBotRelay } from './src/bot-relay.js';
 
 const envFile = loadEnv();
 if (envFile) console.log('[tg-worker] loaded env from ' + envFile);
@@ -183,6 +185,12 @@ const cleanupTimer = setInterval(() => photoCache.cleanup(), 6 * 60 * 60 * 1000)
 if (cleanupTimer.unref) cleanupTimer.unref();
 
 const app = express();
+const workerKey = String(process.env.WORKER_API_KEY || '').trim();
+app.use(requireWorkerKey(workerKey));
+if (registerBotRelay(app, { enabled: Boolean(workerKey) })) {
+  console.log('[tg-worker] Bot API relay enabled at /telegram/bot<token>/<method>');
+}
+if (!workerKey) console.warn('[tg-worker] WORKER_API_KEY is not set: the HTTP API is open to anyone who can reach it');
 registerRoutes(app, {
   gateway,
   photoCache,
